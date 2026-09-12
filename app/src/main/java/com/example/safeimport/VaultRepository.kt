@@ -52,8 +52,18 @@ class VaultRepository(context: Context) {
     fun verifyLockPassword(candidate: String): Boolean =
         prefs.getString(KEY_LOCK_PASSWORD, null) == candidate
 
+    // --- Theme preference ---
+
+    /** "light", "dark", or "system". */
+    fun getThemeMode(): String = prefs.getString(KEY_THEME_MODE, "system") ?: "system"
+
+    fun setThemeMode(mode: String) {
+        prefs.edit().putString(KEY_THEME_MODE, mode).apply()
+    }
+
     companion object {
         private const val KEY_ITEMS = "items_json"
         private const val KEY_LOCK_PASSWORD = "app_lock_password"
+        private const val KEY_THEME_MODE = "theme_mode"
     }
 }

@@ -7,7 +7,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -62,8 +64,20 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
+            var themeMode by remember { mutableStateOf(repo?.getThemeMode() ?: "system") }
+            val darkTheme = when (themeMode) {
+                "dark" -> true
+                "light" -> false
+                else -> isSystemInDarkTheme()
+            }
+            MaterialTheme(
+                colorScheme = if (darkTheme) darkColorScheme() else lightColorScheme()
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .windowInsetsPadding(WindowInsets.systemBars)
+                ) {
                     when {
                         initError != null -> ErrorScreen(
                             title = "Couldn't start secure storage",
@@ -76,7 +90,14 @@ class MainActivity : ComponentActivity() {
                             crashFile = crashFile,
                             onDismiss = { crashFile.delete() }
                         )
-                        else -> LockGate(repo!!)
+                        else -> LockGate(
+                            repo = repo!!,
+                            themeMode = themeMode,
+                            onThemeModeChange = {
+                                themeMode = it
+                                repo.setThemeMode(it)
+                            }
+                        )
                     }
                 }
             }
@@ -86,10 +107,10 @@ class MainActivity : ComponentActivity() {
 
 /** Shows a set-password / enter-password screen before revealing the app content. */
 @Composable
-fun LockGate(repo: VaultRepository) {
+fun LockGate(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) -> Unit) {
     var unlocked by remember { mutableStateOf(false) }
     if (unlocked) {
-        App(repo)
+        App(repo, themeMode, onThemeModeChange)
         return
     }
 
@@ -198,11 +219,12 @@ private sealed class Screen {
     data class Detail(val uid: Long) : Screen()
     data class Edit(val uid: Long?, val parent: Long, val asFolder: Boolean) : Screen()
     data object ChangePassword : Screen()
+    data object Theme : Screen()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun App(repo: VaultRepository) {
+fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) -> Unit) {
     var items by remember { mutableStateOf(repo.loadItems()) }
     var currentFolder by remember { mutableStateOf(0L) } // 0 = root
     var screen by remember { mutableStateOf<Screen>(Screen.Folder) }
@@ -236,7 +258,7 @@ fun App(repo: VaultRepository) {
                 if (showBack) {
                     IconButton(onClick = {
                         when (screen) {
-                            is Screen.Detail, is Screen.Edit, Screen.ChangePassword -> screen = Screen.Folder
+                            is Screen.Detail, is Screen.Edit, Screen.ChangePassword, Screen.Theme -> screen = Screen.Folder
                             else -> {
                                 val cur = items.find { it.uid == currentFolder }
                                 currentFolder = cur?.parent ?: 0L
@@ -257,6 +279,10 @@ fun App(repo: VaultRepository) {
                     }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                         DropdownMenuItem(
+                            text = { Text("Theme") },
+                            onClick = { menuExpanded = false; screen = Screen.Theme }
+                        )
+                        DropdownMenuItem(
                             text = { Text("Change password") },
                             onClick = { menuExpanded = false; screen = Screen.ChangePassword }
                         )
@@ -275,7 +301,11 @@ fun App(repo: VaultRepository) {
                     items = items,
                     currentFolder = currentFolder,
                     onOpenFolder = { currentFolder = it },
-                    onOpenItem = { screen = Screen.Detail(it.uid) }
+                    onOpenItem = { screen = Screen.Detail(it.uid) },
+                    onEditItem = { screen = Screen.Edit(it.uid, it.parent, it.isFolder) },
+                    onDeleteItem = { target ->
+                        persist(items.filterNot { it.uid == target.uid || it.parent == target.uid })
+                    }
                 )
                 FabRow(
                     modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
@@ -321,6 +351,10 @@ fun App(repo: VaultRepository) {
             Screen.ChangePassword -> ChangePasswordScreen(
                 repo = repo,
                 onDone = { screen = Screen.Folder }
+            )
+            Screen.Theme -> ThemeScreen(
+                current = themeMode,
+                onSelect = { onThemeModeChange(it); screen = Screen.Folder }
             )
         }
     }
@@ -412,19 +446,65 @@ fun EmptyState() {
 }
 
 @Composable
+fun ThemeScreen(current: String, onSelect: (String) -> Unit) {
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Text("Theme", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(16.dp))
+        listOf("system" to "Follow system", "light" to "Light", "dark" to "Dark").forEach { (value, label) ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onSelect(value) }
+                    .padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(selected = current == value, onClick = { onSelect(value) })
+                Spacer(Modifier.width(8.dp))
+                Text(label)
+            }
+        }
+    }
+}
+
+@Composable
 fun FolderList(
     items: List<VaultItem>,
     currentFolder: Long,
     onOpenFolder: (Long) -> Unit,
-    onOpenItem: (VaultItem) -> Unit
+    onOpenItem: (VaultItem) -> Unit,
+    onEditItem: (VaultItem) -> Unit,
+    onDeleteItem: (VaultItem) -> Unit
 ) {
     val children = items.filter { it.parent == currentFolder && it.uid != 0L }
+    var confirmDeleteItem by remember { mutableStateOf<VaultItem?>(null) }
+    var menuForUid by remember { mutableStateOf<Long?>(null) }
+
     LazyColumn(Modifier.fillMaxSize()) {
         items(children) { item ->
             ListItem(
                 headlineContent = { Text(item.title) },
                 supportingContent = {
                     if (item.isFolder) Text("Folder") else Text(item.fieldPairs().drop(1).take(1).joinToString { it.second })
+                },
+                trailingContent = {
+                    Box {
+                        IconButton(onClick = { menuForUid = item.uid }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Options")
+                        }
+                        DropdownMenu(
+                            expanded = menuForUid == item.uid,
+                            onDismissRequest = { menuForUid = null }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Edit") },
+                                onClick = { menuForUid = null; onEditItem(item) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete") },
+                                onClick = { menuForUid = null; confirmDeleteItem = item }
+                            )
+                        }
+                    }
                 },
                 modifier = Modifier.clickable {
                     if (item.isFolder) onOpenFolder(item.uid) else onOpenItem(item)
@@ -434,7 +514,27 @@ fun FolderList(
         }
         item { Spacer(Modifier.height(80.dp)) } // room for the FABs
     }
+
+    confirmDeleteItem?.let { target ->
+        AlertDialog(
+            onDismissRequest = { confirmDeleteItem = null },
+            title = { Text("Delete this?") },
+            text = {
+                Text(
+                    if (target.isFolder) "This deletes the folder and everything inside it."
+                    else "This can't be undone."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmDeleteItem = null; onDeleteItem(target) }) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteItem = null }) { Text("Cancel") }
+            }
+        )
+    }
 }
+
 
 @Composable
 fun ItemDetail(item: VaultItem, onEdit: () -> Unit, onDelete: () -> Unit) {

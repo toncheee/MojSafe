@@ -47,6 +47,13 @@ data class VaultItem(
         put("strings", JSONArray(strings))
     }
 
+    /** Returns a copy of this item with its flat string list rebuilt from label/value pairs. */
+    fun withFieldPairs(pairs: List<Pair<String, String>>): VaultItem {
+        val flat = mutableListOf<String>()
+        pairs.forEach { (l, v) -> flat.add(l); flat.add(v) }
+        return copy(strings = flat)
+    }
+
     companion object {
         fun fromJson(o: JSONObject): VaultItem {
             val arr = o.optJSONArray("strings") ?: JSONArray()
@@ -72,3 +79,12 @@ fun parseVaultItems(jsonText: String): List<VaultItem> {
     val arr = JSONArray(jsonText)
     return (0 until arr.length()).map { VaultItem.fromJson(arr.getJSONObject(it)) }
 }
+
+/** attr value used for a plain folder (matches what Handy Safe used). */
+const val ATTR_FOLDER = 1
+
+/** attr value used for a card/entry with fields. */
+const val ATTR_CARD = 5
+
+/** A uid that won't collide with recovered Handy Safe uids (those were much smaller ints). */
+fun newUid(): Long = System.currentTimeMillis()

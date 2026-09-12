@@ -41,7 +41,19 @@ class VaultRepository(context: Context) {
         prefs.edit().clear().apply()
     }
 
+    // --- App lock (separate from the migrated Handy Safe data) ---
+
+    fun hasLockPassword(): Boolean = prefs.contains(KEY_LOCK_PASSWORD)
+
+    fun setLockPassword(newPassword: String) {
+        prefs.edit().putString(KEY_LOCK_PASSWORD, newPassword).apply()
+    }
+
+    fun verifyLockPassword(candidate: String): Boolean =
+        prefs.getString(KEY_LOCK_PASSWORD, null) == candidate
+
     companion object {
         private const val KEY_ITEMS = "items_json"
+        private const val KEY_LOCK_PASSWORD = "app_lock_password"
     }
 }

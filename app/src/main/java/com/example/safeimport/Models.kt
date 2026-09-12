@@ -93,8 +93,10 @@ fun newUid(): Long = System.currentTimeMillis()
 fun descendantsOf(items: List<VaultItem>, root: Long): Set<Long> {
     val result = mutableSetOf(root)
     var changed = true
-    while (changed) {
+    var safety = 0
+    while (changed && safety < 10_000) {
         changed = false
+        safety++
         for (it in items) {
             if (it.parent in result && it.uid !in result) {
                 result.add(it.uid)

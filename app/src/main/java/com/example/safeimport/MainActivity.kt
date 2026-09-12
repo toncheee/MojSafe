@@ -32,6 +32,30 @@ import androidx.compose.ui.unit.dp
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
+/** Detects a frozen main thread (an ANR) and writes a stack dump to `crashFile`, since
+ *  ANRs don't go through the normal uncaught-exception handler and would otherwise leave
+ *  no trace at all. */
+private fun installAnrWatchdog(crashFile: java.io.File) {
+    val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    Thread {
+        while (true) {
+            val responded = java.util.concurrent.atomic.AtomicBoolean(false)
+            mainHandler.post { responded.set(true) }
+            Thread.sleep(3000)
+            if (!responded.get()) {
+                val sb = StringBuilder("Possible freeze/ANR detected at ${java.util.Date()}\n\n")
+                for ((t, trace) in Thread.getAllStackTraces()) {
+                    sb.append("Thread: ${t.name} (state=${t.state})\n")
+                    trace.forEach { sb.append("    at $it\n") }
+                    sb.append("\n")
+                }
+                runCatching { crashFile.writeText(sb.toString()) }
+            }
+            Thread.sleep(4000)
+        }
+    }.apply { isDaemon = true; name = "anr-watchdog"; start() }
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,6 +79,8 @@ class MainActivity : ComponentActivity() {
         val previousCrash = if (crashFile.exists()) {
             runCatching { crashFile.readText() }.getOrNull()
         } else null
+
+        installAnrWatchdog(crashFile)
 
         var initError: String? = null
         var repo: VaultRepository? = null
@@ -243,7 +269,7 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
     }
 
     val context = androidx.compose.ui.platform.LocalContext.current
-    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+    val restoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri ?: return@rememberLauncherForActivityResult
         context.contentResolver.openInputStream(uri)?.use { stream ->
             val text = BufferedReader(InputStreamReader(stream)).readText()
@@ -251,14 +277,44 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
                 persist(parseVaultItems(text))
                 errorMsg = null
             } catch (e: Exception) {
-                errorMsg = "Import failed: ${e.message}"
+                errorMsg = "Restore failed: ${e.message}"
             }
+        }
+    }
+    val backupToFileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        try {
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+                out.write(items.toJsonArray().toString(2).toByteArray())
+            }
+            errorMsg = null
+        } catch (e: Exception) {
+            errorMsg = "Backup failed: ${e.message}"
+        }
+    }
+
+    fun shareBackup() {
+        try {
+            val dir = java.io.File(context.cacheDir, "backups").apply { mkdirs() }
+            val file = java.io.File(dir, "mojsafe-backup.json")
+            file.writeText(items.toJsonArray().toString(2))
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", file
+            )
+            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "application/json"
+                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(android.content.Intent.createChooser(intent, "Share backup to…"))
+        } catch (e: Exception) {
+            errorMsg = "Share failed: ${e.message}"
         }
     }
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
-            title = { Text("Safe Import") },
+            title = { Text("MojSafe") },
             navigationIcon = {
                 val showBack = screen != Screen.Folder || currentFolder != 0L
                 if (showBack) {
@@ -277,13 +333,27 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
             },
             actions = {
                 if (screen == Screen.Folder) {
-                    IconButton(onClick = { importLauncher.launch("application/json") }) {
-                        Icon(Icons.Default.Upload, contentDescription = "Import JSON")
-                    }
                     IconButton(onClick = { menuExpanded = true }) {
                         Icon(Icons.Default.MoreVert, contentDescription = "More")
                     }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Backup to file…") },
+                            onClick = {
+                                menuExpanded = false
+                                val stamp = java.text.SimpleDateFormat("yyyy-MM-dd_HHmm").format(java.util.Date())
+                                backupToFileLauncher.launch("mojsafe-backup-$stamp.json")
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Share backup (cloud, email…)") },
+                            onClick = { menuExpanded = false; shareBackup() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Restore backup…") },
+                            onClick = { menuExpanded = false; restoreLauncher.launch("application/json") }
+                        )
+                        HorizontalDivider()
                         DropdownMenuItem(
                             text = { Text("Theme") },
                             onClick = { menuExpanded = false; screen = Screen.Theme }
@@ -465,6 +535,7 @@ fun MoveScreen(
     var browsingFolder by remember { mutableStateOf(0L) }
     val folderPath = remember(browsingFolder, items) {
         generateSequence(items.find { it.uid == browsingFolder }) { f -> items.find { it.uid == f.parent } }
+            .take(200) // safety bound: never hang, even if the data has a corrupt parent cycle
             .toList().reversed()
     }
     val visibleFolders = items.filter {
@@ -525,8 +596,8 @@ fun EmptyState() {
         Text("No data yet.", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(8.dp))
         Text(
-            "Tap the upload icon above to import items_full.json from the Handy Safe " +
-            "migration, or use the + buttons below to add folders/cards by hand.",
+            "Open the ⋮ menu above and tap \"Restore backup…\" to bring in a previous " +
+            "export, or use the + buttons below to add folders/cards by hand.",
             style = MaterialTheme.typography.bodyMedium
         )
     }

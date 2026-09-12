@@ -17,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -220,6 +221,7 @@ private sealed class Screen {
     data class Edit(val uid: Long?, val parent: Long, val asFolder: Boolean) : Screen()
     data object ChangePassword : Screen()
     data object Theme : Screen()
+    data class Move(val uid: Long) : Screen()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -234,6 +236,10 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
     fun persist(newItems: List<VaultItem>) {
         items = newItems
         repo.saveItems(newItems)
+    }
+
+    fun moveItem(uid: Long, newParent: Long) {
+        persist(items.map { if (it.uid == uid) it.copy(parent = newParent) else it })
     }
 
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -258,7 +264,7 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
                 if (showBack) {
                     IconButton(onClick = {
                         when (screen) {
-                            is Screen.Detail, is Screen.Edit, Screen.ChangePassword, Screen.Theme -> screen = Screen.Folder
+                            is Screen.Detail, is Screen.Edit, Screen.ChangePassword, Screen.Theme, is Screen.Move -> screen = Screen.Folder
                             else -> {
                                 val cur = items.find { it.uid == currentFolder }
                                 currentFolder = cur?.parent ?: 0L
@@ -303,6 +309,7 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
                     onOpenFolder = { currentFolder = it },
                     onOpenItem = { screen = Screen.Detail(it.uid) },
                     onEditItem = { screen = Screen.Edit(it.uid, it.parent, it.isFolder) },
+                    onMoveItem = { screen = Screen.Move(it.uid) },
                     onDeleteItem = { target ->
                         persist(items.filterNot { it.uid == target.uid || it.parent == target.uid })
                     }
@@ -321,6 +328,7 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
                     ItemDetail(
                         item = item,
                         onEdit = { screen = Screen.Edit(item.uid, item.parent, item.isFolder) },
+                        onMove = { screen = Screen.Move(item.uid) },
                         onDelete = {
                             persist(items.filterNot { it.uid == item.uid || it.parent == item.uid })
                             screen = Screen.Folder
@@ -356,6 +364,22 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
                 current = themeMode,
                 onSelect = { onThemeModeChange(it); screen = Screen.Folder }
             )
+            is Screen.Move -> {
+                val item = items.find { it.uid == s.uid }
+                if (item == null) {
+                    screen = Screen.Folder
+                } else {
+                    MoveScreen(
+                        items = items,
+                        itemToMove = item,
+                        onMoveTo = { dest ->
+                            moveItem(item.uid, dest)
+                            screen = Screen.Folder
+                        },
+                        onCancel = { screen = Screen.Folder }
+                    )
+                }
+            }
         }
     }
 }
@@ -429,6 +453,69 @@ fun ChangePasswordScreen(repo: VaultRepository, onDone: () -> Unit) {
 }
 
 @Composable
+fun MoveScreen(
+    items: List<VaultItem>,
+    itemToMove: VaultItem,
+    onMoveTo: (Long) -> Unit,
+    onCancel: () -> Unit
+) {
+    // Can't move a folder into itself or into one of its own descendants.
+    val forbidden = if (itemToMove.isFolder) descendantsOf(items, itemToMove.uid) else emptySet()
+
+    var browsingFolder by remember { mutableStateOf(0L) }
+    val folderPath = remember(browsingFolder, items) {
+        generateSequence(items.find { it.uid == browsingFolder }) { f -> items.find { it.uid == f.parent } }
+            .toList().reversed()
+    }
+    val visibleFolders = items.filter {
+        it.parent == browsingFolder && it.isFolder && it.uid !in forbidden
+    }
+    val alreadyHere = itemToMove.parent == browsingFolder
+
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Text("Move \"${itemToMove.title}\"", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Root" + folderPath.joinToString("") { " / ${it.title}" },
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(Modifier.height(12.dp))
+
+        LazyColumn(Modifier.weight(1f)) {
+            if (browsingFolder != 0L) {
+                item {
+                    ListItem(
+                        headlineContent = { Text("..") },
+                        modifier = Modifier.clickable {
+                            val cur = items.find { it.uid == browsingFolder }
+                            browsingFolder = cur?.parent ?: 0L
+                        }
+                    )
+                    HorizontalDivider()
+                }
+            }
+            items(visibleFolders) { folder ->
+                ListItem(
+                    headlineContent = { Text(folder.title) },
+                    trailingContent = { Icon(Icons.Default.ChevronRight, contentDescription = null) },
+                    modifier = Modifier.clickable { browsingFolder = folder.uid }
+                )
+                HorizontalDivider()
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(
+                onClick = { onMoveTo(browsingFolder) },
+                enabled = !alreadyHere
+            ) { Text(if (browsingFolder == 0L) "Move to root" else "Move here") }
+            OutlinedButton(onClick = onCancel) { Text("Cancel") }
+        }
+    }
+}
+
+@Composable
 fun EmptyState() {
     Column(
         Modifier.fillMaxSize().padding(24.dp),
@@ -473,6 +560,7 @@ fun FolderList(
     onOpenFolder: (Long) -> Unit,
     onOpenItem: (VaultItem) -> Unit,
     onEditItem: (VaultItem) -> Unit,
+    onMoveItem: (VaultItem) -> Unit,
     onDeleteItem: (VaultItem) -> Unit
 ) {
     val children = items.filter { it.parent == currentFolder && it.uid != 0L }
@@ -498,6 +586,10 @@ fun FolderList(
                             DropdownMenuItem(
                                 text = { Text("Edit") },
                                 onClick = { menuForUid = null; onEditItem(item) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Move") },
+                                onClick = { menuForUid = null; onMoveItem(item) }
                             )
                             DropdownMenuItem(
                                 text = { Text("Delete") },
@@ -537,7 +629,7 @@ fun FolderList(
 
 
 @Composable
-fun ItemDetail(item: VaultItem, onEdit: () -> Unit, onDelete: () -> Unit) {
+fun ItemDetail(item: VaultItem, onEdit: () -> Unit, onMove: () -> Unit, onDelete: () -> Unit) {
     var confirmDelete by remember { mutableStateOf(false) }
     val revealed = remember { mutableStateMapOf<Int, Boolean>() }
 
@@ -546,6 +638,7 @@ fun ItemDetail(item: VaultItem, onEdit: () -> Unit, onDelete: () -> Unit) {
             Text(item.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Row {
                 IconButton(onClick = onEdit) { Icon(Icons.Default.Edit, contentDescription = "Edit") }
+                IconButton(onClick = onMove) { Icon(Icons.AutoMirrored.Filled.DriveFileMove, contentDescription = "Move") }
                 IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, contentDescription = "Delete") }
             }
         }

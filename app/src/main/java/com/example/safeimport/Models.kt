@@ -88,3 +88,20 @@ const val ATTR_CARD = 5
 
 /** A uid that won't collide with recovered Handy Safe uids (those were much smaller ints). */
 fun newUid(): Long = System.currentTimeMillis()
+
+/** All descendant uids of `root` (folders and their contents), including root itself. */
+fun descendantsOf(items: List<VaultItem>, root: Long): Set<Long> {
+    val result = mutableSetOf(root)
+    var changed = true
+    while (changed) {
+        changed = false
+        for (it in items) {
+            if (it.parent in result && it.uid !in result) {
+                result.add(it.uid)
+                changed = true
+            }
+        }
+    }
+    return result
+}
+

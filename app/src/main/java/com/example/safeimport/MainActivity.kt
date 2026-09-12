@@ -48,13 +48,11 @@ class MainActivity : ComponentActivity() {
             runCatching { crashFile.readText() }.getOrNull()
         } else null
 
-        val initError: String? 
-        val repo: VaultRepository?
+        var initError: String? = null
+        var repo: VaultRepository? = null
         try {
             repo = VaultRepository(applicationContext)
-            initError = null
         } catch (t: Throwable) {
-            repo = null
             initError = android.util.Log.getStackTraceString(t)
         }
 

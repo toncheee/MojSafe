@@ -4,6 +4,7 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -120,8 +121,11 @@ fun App(repo: VaultRepository) {
     var openItem by remember { mutableStateOf<VaultItem?>(null) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
-    val importLauncher = rememberImportLauncher(
-        onLoaded = { text ->
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        context.contentResolver.openInputStream(uri)?.use { stream ->
+            val text = BufferedReader(InputStreamReader(stream)).readText()
             try {
                 val parsed = parseVaultItems(text)
                 repo.saveItems(parsed)
@@ -131,7 +135,7 @@ fun App(repo: VaultRepository) {
                 errorMsg = "Import failed: ${e.message}"
             }
         }
-    )
+    }
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
@@ -151,7 +155,7 @@ fun App(repo: VaultRepository) {
                 }
             },
             actions = {
-                TextButton(onClick = { importLauncher() }) { Text("Import JSON") }
+                TextButton(onClick = { importLauncher.launch("application/json") }) { Text("Import JSON") }
             }
         )
 
@@ -170,19 +174,6 @@ fun App(repo: VaultRepository) {
             )
         }
     }
-}
-
-@Composable
-private fun rememberImportLauncher(onLoaded: (String) -> Unit): () -> Unit {
-    val activity = androidx.compose.ui.platform.LocalContext.current as ComponentActivity
-    val launcher = activity.registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        uri ?: return@registerForActivityResult
-        activity.contentResolver.openInputStream(uri)?.use { stream ->
-            val text = BufferedReader(InputStreamReader(stream)).readText()
-            onLoaded(text)
-        }
-    }
-    return { launcher.launch("application/json") }
 }
 
 @Composable

@@ -26,10 +26,11 @@ data class VaultItem(
     /** Best-effort display title: first string, or "(untitled)". */
     val title: String get() = strings.firstOrNull()?.takeIf { it.isNotBlank() } ?: "(untitled)"
 
-    /** Pairs up the flat string list as (label, value) rows for display, when possible. */
-    fun fieldPairs(): List<Pair<String, String>> {
+    /** Pairs up the flat string list as (label, value) rows for display, when possible.
+     *  `startIndex` lets callers skip a leading title slot (see [title]). */
+    fun fieldPairs(startIndex: Int = 0): List<Pair<String, String>> {
         val out = mutableListOf<Pair<String, String>>()
-        var i = 0
+        var i = startIndex
         while (i < strings.size) {
             val label = strings[i]
             val value = strings.getOrNull(i + 1) ?: ""
@@ -45,13 +46,6 @@ data class VaultItem(
         put("attr", attr)
         put("time", time)
         put("strings", JSONArray(strings))
-    }
-
-    /** Returns a copy of this item with its flat string list rebuilt from label/value pairs. */
-    fun withFieldPairs(pairs: List<Pair<String, String>>): VaultItem {
-        val flat = mutableListOf<String>()
-        pairs.forEach { (l, v) -> flat.add(l); flat.add(v) }
-        return copy(strings = flat)
     }
 
     companion object {

@@ -430,8 +430,8 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
                             parent = s.parent,
                             attr = if (s.asFolder) ATTR_FOLDER else ATTR_CARD,
                             time = existing?.time ?: (System.currentTimeMillis() / 1000),
-                            strings = if (s.asFolder) listOf(title) else emptyList()
-                        ).let { if (s.asFolder) it else it.withFieldPairs(listOf("Title" to title) + fields) }
+                            strings = listOf(title) + fields.flatMap { (l, v) -> listOf(l, v) }
+                        )
                         persist(items.filterNot { it.uid == uid } + newItem)
                         screen = if (existing != null) Screen.Detail(uid) else Screen.Folder
                     },
@@ -761,7 +761,7 @@ fun FolderList(
             ListItem(
                 headlineContent = { Text(item.title) },
                 supportingContent = {
-                    if (item.isFolder) Text("Folder") else Text(item.fieldPairs().drop(1).take(1).joinToString { it.second })
+                    if (item.isFolder) Text("Folder") else Text(item.fieldPairs(startIndex = 1).take(1).joinToString { it.second })
                 },
                 trailingContent = {
                     Box {
@@ -832,7 +832,7 @@ fun ItemDetail(item: VaultItem, onEdit: () -> Unit, onMove: () -> Unit, onDelete
             }
         }
         Spacer(Modifier.height(12.dp))
-        item.fieldPairs().drop(if (item.isFolder) 0 else 1).forEachIndexed { idx, (label, value) ->
+        item.fieldPairs(startIndex = if (item.isFolder) 0 else 1).forEachIndexed { idx, (label, value) ->
             val isSensitive = label.contains("PIN", true) ||
                 label.contains("password", true) ||
                 label.contains("card", true) ||
@@ -884,7 +884,7 @@ fun EditItemScreen(
 ) {
     var title by remember { mutableStateOf(existing?.title ?: "") }
     val fields: SnapshotStateList<Pair<String, String>> = remember {
-        (existing?.fieldPairs()?.drop(if (isFolder) 0 else 1) ?: emptyList())
+        (existing?.fieldPairs(startIndex = if (isFolder) 0 else 1) ?: emptyList())
             .ifEmpty { listOf("" to "") }
             .toMutableStateList()
     }

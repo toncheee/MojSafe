@@ -13,6 +13,10 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -29,8 +33,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import java.io.BufferedReader
-import java.io.InputStreamReader
 
 /** Detects a frozen main thread (an ANR) and writes a stack dump to `crashFile`, since
  *  ANRs don't go through the normal uncaught-exception handler and would otherwise leave
@@ -132,10 +134,37 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** Shows a set-password / enter-password screen before revealing the app content. */
+/** Set right before launching our own system picker (file save/open) so the auto-lock
+ *  doesn't fire for that momentary background transition — only for genuinely leaving
+ *  the app (home, app switch, screen off, etc.). */
+object AutoLockGuard {
+    @Volatile var suppressNext = false
+}
+
+/** Shows a set-password / enter-password screen before revealing the app content.
+ *  Re-locks automatically whenever the app is actually backgrounded (home button, app
+ *  switch, screen off) — the password is required again every time. Opening our own
+ *  file picker for encrypted backup/restore is deliberately excluded (see AutoLockGuard),
+ *  since that also briefly backgrounds the activity but isn't "leaving the app". */
 @Composable
 fun LockGate(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) -> Unit) {
     var unlocked by remember { mutableStateOf(false) }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                if (AutoLockGuard.suppressNext) {
+                    AutoLockGuard.suppressNext = false
+                } else {
+                    unlocked = false
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     if (unlocked) {
         App(repo, themeMode, onThemeModeChange)
         return
@@ -270,29 +299,6 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
     }
 
     val context = androidx.compose.ui.platform.LocalContext.current
-    val restoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        uri ?: return@rememberLauncherForActivityResult
-        context.contentResolver.openInputStream(uri)?.use { stream ->
-            val text = BufferedReader(InputStreamReader(stream)).readText()
-            try {
-                persist(parseVaultItems(text))
-                errorMsg = null
-            } catch (e: Exception) {
-                errorMsg = "Restore failed: ${e.message}"
-            }
-        }
-    }
-    val backupToFileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
-        uri ?: return@rememberLauncherForActivityResult
-        try {
-            context.contentResolver.openOutputStream(uri)?.use { out ->
-                out.write(items.toJsonArray().toString(2).toByteArray())
-            }
-            errorMsg = null
-        } catch (e: Exception) {
-            errorMsg = "Backup failed: ${e.message}"
-        }
-    }
 
     var pendingPassphrase by remember { mutableStateOf<CharArray?>(null) }
     val encryptedBackupLauncher = rememberLauncherForActivityResult(
@@ -325,25 +331,6 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
         }
     }
 
-    fun shareBackup() {
-        try {
-            val dir = java.io.File(context.cacheDir, "backups").apply { mkdirs() }
-            val file = java.io.File(dir, "mojsafe-backup.json")
-            file.writeText(items.toJsonArray().toString(2))
-            val uri = androidx.core.content.FileProvider.getUriForFile(
-                context, "${context.packageName}.fileprovider", file
-            )
-            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                type = "application/json"
-                putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            context.startActivity(android.content.Intent.createChooser(intent, "Share backup to…"))
-        } catch (e: Exception) {
-            errorMsg = "Share failed: ${e.message}"
-        }
-    }
-
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
             title = { Text("MojSafe") },
@@ -370,23 +357,6 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
                         Icon(Icons.Default.MoreVert, contentDescription = "More")
                     }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Backup to file…") },
-                            onClick = {
-                                menuExpanded = false
-                                val stamp = java.text.SimpleDateFormat("yyyy-MM-dd_HHmm").format(java.util.Date())
-                                backupToFileLauncher.launch("mojsafe-backup-$stamp.json")
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Share backup (cloud, email…)") },
-                            onClick = { menuExpanded = false; shareBackup() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Restore backup…") },
-                            onClick = { menuExpanded = false; restoreLauncher.launch("application/json") }
-                        )
-                        HorizontalDivider()
                         DropdownMenuItem(
                             text = { Text("Encrypted backup…") },
                             onClick = { menuExpanded = false; screen = Screen.EncryptedBackupPrompt(restoring = false) }
@@ -497,6 +467,7 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
                 confirmRequired = !s.restoring,
                 onConfirm = { pass ->
                     pendingPassphrase = pass
+                    AutoLockGuard.suppressNext = true
                     if (s.restoring) {
                         encryptedRestoreLauncher.launch("*/*")
                     } else {
@@ -743,7 +714,7 @@ fun EmptyState() {
         Text("No data yet.", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(8.dp))
         Text(
-            "Open the ⋮ menu above and tap \"Restore backup…\" to bring in a previous " +
+            "Open the ⋮ menu above and tap \"Encrypted restore…\" to bring in a previous " +
             "export, or use the + buttons below to add folders/cards by hand.",
             style = MaterialTheme.typography.bodyMedium
         )

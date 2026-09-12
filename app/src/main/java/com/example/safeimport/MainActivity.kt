@@ -6,6 +6,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,17 +27,92 @@ import java.io.InputStreamReader
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val repo = VaultRepository(applicationContext)
+
+        // Install a crash handler that writes the stack trace to a plain text file
+        // instead of letting the app die silently — this lets a crash be diagnosed
+        // just by opening the file (e.g. via a file manager) or by re-opening the
+        // app, which shows the last crash at the top of the screen.
+        val crashFile = java.io.File(filesDir, "last_crash.txt")
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                crashFile.writeText(
+                    "Crashed at ${java.util.Date()}\n\n" +
+                    android.util.Log.getStackTraceString(throwable)
+                )
+            } catch (_: Exception) { /* ignore, we're already crashing */ }
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
+
+        val previousCrash = if (crashFile.exists()) {
+            runCatching { crashFile.readText() }.getOrNull()
+        } else null
+
+        val initError: String? 
+        val repo: VaultRepository?
+        try {
+            repo = VaultRepository(applicationContext)
+            initError = null
+        } catch (t: Throwable) {
+            repo = null
+            initError = android.util.Log.getStackTraceString(t)
+        }
 
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    App(repo)
+                    when {
+                        initError != null -> ErrorScreen(
+                            title = "Couldn't start secure storage",
+                            details = initError,
+                            crashFile = crashFile
+                        )
+                        previousCrash != null -> ErrorScreen(
+                            title = "The app crashed last time it ran",
+                            details = previousCrash,
+                            crashFile = crashFile,
+                            onDismiss = { crashFile.delete() }
+                        )
+                        else -> App(repo!!)
+                    }
                 }
             }
         }
     }
 }
+
+@Composable
+fun ErrorScreen(
+    title: String,
+    details: String,
+    crashFile: java.io.File,
+    onDismiss: (() -> Unit)? = null
+) {
+    val scrollState = androidx.compose.foundation.rememberScrollState()
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(scrollState)
+    ) {
+        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Please copy the text below (long-press → Select all → Copy) and send it back " +
+            "for a fix — it's saved at:\n${crashFile.absolutePath}",
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(Modifier.height(12.dp))
+        SelectionContainer {
+            Text(details, style = MaterialTheme.typography.bodySmall)
+        }
+        if (onDismiss != null) {
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = onDismiss) { Text("Dismiss") }
+        }
+    }
+}
+
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable

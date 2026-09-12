@@ -59,3 +59,14 @@ jobs:
         with:
           name: SafeImportApp-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+
+      - name: Publish APK into repo branch (workaround for artifact download restrictions)
+        if: success()
+        run: |
+          git config user.email "ci@example.com"
+          git config user.name "CI Bot"
+          mkdir -p release
+          cp app/build/outputs/apk/debug/*.apk release/MojSafe-debug.apk
+          git add -f release/MojSafe-debug.apk
+          git commit -m "APK build [skip ci]" || echo "nothing to commit"
+          git push origin HEAD:release-apk --force

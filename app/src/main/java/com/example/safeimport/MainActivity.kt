@@ -180,6 +180,12 @@ fun LockGate(repo: VaultRepository, themeMode: String, onThemeModeChange: (Strin
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
+        androidx.compose.foundation.Image(
+            painter = androidx.compose.ui.res.painterResource(R.drawable.ic_safe_logo),
+            contentDescription = null,
+            modifier = Modifier.size(120.dp)
+        )
+        Spacer(Modifier.height(16.dp))
         Text(
             if (hasPassword) "Enter password" else "Set a password",
             style = MaterialTheme.typography.headlineSmall

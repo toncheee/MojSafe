@@ -248,6 +248,7 @@ private sealed class Screen {
     data object ChangePassword : Screen()
     data object Theme : Screen()
     data class Move(val uid: Long) : Screen()
+    data class EncryptedBackupPrompt(val restoring: Boolean) : Screen()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -293,6 +294,37 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
         }
     }
 
+    var pendingPassphrase by remember { mutableStateOf<CharArray?>(null) }
+    val encryptedBackupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri: Uri? ->
+        val pass = pendingPassphrase
+        pendingPassphrase = null
+        if (uri == null || pass == null) return@rememberLauncherForActivityResult
+        try {
+            val plaintext = items.toJsonArray().toString().toByteArray()
+            val encrypted = SecureBackup.encrypt(plaintext, pass)
+            context.contentResolver.openOutputStream(uri)?.use { it.write(encrypted) }
+            errorMsg = null
+        } catch (e: Exception) {
+            errorMsg = "Encrypted backup failed: ${e.message}"
+        }
+    }
+    val encryptedRestoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        val pass = pendingPassphrase
+        pendingPassphrase = null
+        if (uri == null || pass == null) return@rememberLauncherForActivityResult
+        try {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: throw Exception("Couldn't read the file")
+            val plaintext = SecureBackup.decrypt(bytes, pass)
+            persist(parseVaultItems(String(plaintext)))
+            errorMsg = null
+        } catch (e: Exception) {
+            errorMsg = e.message ?: "Encrypted restore failed"
+        }
+    }
+
     fun shareBackup() {
         try {
             val dir = java.io.File(context.cacheDir, "backups").apply { mkdirs() }
@@ -320,7 +352,8 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
                 if (showBack) {
                     IconButton(onClick = {
                         when (screen) {
-                            is Screen.Detail, is Screen.Edit, Screen.ChangePassword, Screen.Theme, is Screen.Move -> screen = Screen.Folder
+                            is Screen.Detail, is Screen.Edit, Screen.ChangePassword, Screen.Theme,
+                            is Screen.Move, is Screen.EncryptedBackupPrompt -> screen = Screen.Folder
                             else -> {
                                 val cur = items.find { it.uid == currentFolder }
                                 currentFolder = cur?.parent ?: 0L
@@ -352,6 +385,15 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
                         DropdownMenuItem(
                             text = { Text("Restore backup…") },
                             onClick = { menuExpanded = false; restoreLauncher.launch("application/json") }
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("Encrypted backup…") },
+                            onClick = { menuExpanded = false; screen = Screen.EncryptedBackupPrompt(restoring = false) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Encrypted restore…") },
+                            onClick = { menuExpanded = false; screen = Screen.EncryptedBackupPrompt(restoring = true) }
                         )
                         HorizontalDivider()
                         DropdownMenuItem(
@@ -450,6 +492,21 @@ fun App(repo: VaultRepository, themeMode: String, onThemeModeChange: (String) ->
                     )
                 }
             }
+            is Screen.EncryptedBackupPrompt -> PassphraseScreen(
+                title = if (s.restoring) "Encrypted restore" else "Encrypted backup",
+                confirmRequired = !s.restoring,
+                onConfirm = { pass ->
+                    pendingPassphrase = pass
+                    if (s.restoring) {
+                        encryptedRestoreLauncher.launch("*/*")
+                    } else {
+                        val stamp = java.text.SimpleDateFormat("yyyy-MM-dd_HHmm").format(java.util.Date())
+                        encryptedBackupLauncher.launch("mojsafe-backup-$stamp.mojsafe")
+                    }
+                    screen = Screen.Folder
+                },
+                onCancel = { screen = Screen.Folder }
+            )
         }
     }
 }
@@ -523,6 +580,65 @@ fun ChangePasswordScreen(repo: VaultRepository, onDone: () -> Unit) {
 }
 
 @Composable
+fun PassphraseScreen(
+    title: String,
+    confirmRequired: Boolean,
+    onConfirm: (CharArray) -> Unit,
+    onCancel: () -> Unit
+) {
+    var pass by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Text(title, style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            if (confirmRequired)
+                "Choose a passphrase to protect this backup file. You'll need it again to restore — write it down somewhere safe, it can't be recovered if lost."
+            else
+                "Enter the passphrase this backup was created with.",
+            style = MaterialTheme.typography.bodySmall
+        )
+        Spacer(Modifier.height(16.dp))
+        OutlinedTextField(
+            value = pass,
+            onValueChange = { pass = it; error = null },
+            label = { Text("Passphrase") },
+            visualTransformation = PasswordVisualTransformation(),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (confirmRequired) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = confirm,
+                onValueChange = { confirm = it; error = null },
+                label = { Text("Confirm passphrase") },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+        error?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(it, color = MaterialTheme.colorScheme.error)
+        }
+        Spacer(Modifier.height(16.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onClick = {
+                when {
+                    pass.isBlank() -> error = "Passphrase can't be empty"
+                    confirmRequired && pass != confirm -> error = "Passphrases don't match"
+                    else -> onConfirm(pass.toCharArray())
+                }
+            }) { Text("Continue") }
+            OutlinedButton(onClick = onCancel) { Text("Cancel") }
+        }
+    }
+}
+
+@Composable
 fun MoveScreen(
     items: List<VaultItem>,
     itemToMove: VaultItem,
@@ -532,57 +648,88 @@ fun MoveScreen(
     // Can't move a folder into itself or into one of its own descendants.
     val forbidden = if (itemToMove.isFolder) descendantsOf(items, itemToMove.uid) else emptySet()
 
-    var browsingFolder by remember { mutableStateOf(0L) }
-    val folderPath = remember(browsingFolder, items) {
-        generateSequence(items.find { it.uid == browsingFolder }) { f -> items.find { it.uid == f.parent } }
-            .take(200) // safety bound: never hang, even if the data has a corrupt parent cycle
-            .toList().reversed()
+    // Flat, indented list of every eligible folder — simpler and far less error-prone
+    // than a drill-down browser. Depth is computed by walking each folder's parent
+    // chain, bounded so corrupt/cyclic data can never hang the UI.
+    data class Row(val folder: VaultItem?, val depth: Int) // folder == null means "Root"
+
+    fun depthOf(folder: VaultItem): Int {
+        var depth = 0
+        var cur: VaultItem? = folder
+        var steps = 0
+        while (cur != null && cur.parent != 0L && steps < 200) {
+            cur = items.find { it.uid == cur!!.parent }
+            depth++
+            steps++
+        }
+        return depth
     }
-    val visibleFolders = items.filter {
-        it.parent == browsingFolder && it.isFolder && it.uid !in forbidden
+
+    val rows = remember(items, itemToMove.uid) {
+        val folders = items.filter { it.isFolder && it.uid !in forbidden }
+            .sortedBy { it.title.lowercase() }
+        listOf(Row(null, 0)) + folders.map { Row(it, depthOf(it)) }
     }
-    val alreadyHere = itemToMove.parent == browsingFolder
+
+    var confirmTarget by remember { mutableStateOf<Row?>(null) }
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text("Move \"${itemToMove.title}\"", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(4.dp))
-        Text(
-            "Root" + folderPath.joinToString("") { " / ${it.title}" },
-            style = MaterialTheme.typography.bodySmall
-        )
-        Spacer(Modifier.height(12.dp))
+        Text("Choose a destination:", style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(8.dp))
 
         LazyColumn(Modifier.weight(1f)) {
-            if (browsingFolder != 0L) {
-                item {
-                    ListItem(
-                        headlineContent = { Text("..") },
-                        modifier = Modifier.clickable {
-                            val cur = items.find { it.uid == browsingFolder }
-                            browsingFolder = cur?.parent ?: 0L
-                        }
-                    )
-                    HorizontalDivider()
-                }
-            }
-            items(visibleFolders) { folder ->
+            items(rows, key = { it.folder?.uid ?: -1L }) { row ->
+                val destUid = row.folder?.uid ?: 0L
+                val isCurrent = itemToMove.parent == destUid
+                val isSelf = row.folder?.uid == itemToMove.uid
                 ListItem(
-                    headlineContent = { Text(folder.title) },
-                    trailingContent = { Icon(Icons.Default.ChevronRight, contentDescription = null) },
-                    modifier = Modifier.clickable { browsingFolder = folder.uid }
+                    headlineContent = {
+                        Text(
+                            (row.folder?.title ?: "Root (top level)") +
+                                if (isCurrent) "  (current location)" else ""
+                        )
+                    },
+                    leadingContent = {
+                        Icon(
+                            if (row.folder == null) Icons.Default.Home else Icons.Default.Folder,
+                            contentDescription = null
+                        )
+                    },
+                    modifier = Modifier
+                        .padding(start = (row.depth * 24).dp)
+                        .let { m ->
+                            if (isCurrent || isSelf) m else m.clickable { confirmTarget = row }
+                        }
                 )
                 HorizontalDivider()
             }
         }
 
         Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(
-                onClick = { onMoveTo(browsingFolder) },
-                enabled = !alreadyHere
-            ) { Text(if (browsingFolder == 0L) "Move to root" else "Move here") }
-            OutlinedButton(onClick = onCancel) { Text("Cancel") }
-        }
+        OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+    }
+
+    confirmTarget?.let { row ->
+        val destUid = row.folder?.uid ?: 0L
+        AlertDialog(
+            onDismissRequest = { confirmTarget = null },
+            title = { Text("Move here?") },
+            text = {
+                Text(
+                    "Move \"${itemToMove.title}\" into " +
+                        "\"${row.folder?.title ?: "Root (top level)"}\"" +
+                        if (itemToMove.isFolder) " (everything inside it moves along with it)." else "."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmTarget = null; onMoveTo(destUid) }) { Text("Move") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmTarget = null }) { Text("Cancel") }
+            }
+        )
     }
 }
 

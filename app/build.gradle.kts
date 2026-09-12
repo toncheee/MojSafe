@@ -69,5 +69,6 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     implementation("androidx.security:security-crypto:1.1.0")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

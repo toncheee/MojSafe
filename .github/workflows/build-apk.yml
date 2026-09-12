@@ -6,6 +6,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -28,7 +31,26 @@ jobs:
           gradle-version: "8.7"
 
       - name: Build debug APK
-        run: gradle assembleDebug --stacktrace
+        run: |
+          set +e
+          gradle assembleDebug --stacktrace > build.log 2>&1
+          echo "BUILD_EXIT=$?" >> "$GITHUB_ENV"
+          tail -n 400 build.log > build_tail.log
+          cat build_tail.log
+
+      - name: Save build log to repo (always, for diagnostics)
+        if: always()
+        run: |
+          git config user.email "ci@example.com"
+          git config user.name "CI Bot"
+          mkdir -p ci-logs
+          cp build_tail.log ci-logs/latest.log 2>/dev/null || echo "no log produced" > ci-logs/latest.log
+          git add ci-logs/latest.log
+          git commit -m "CI log [skip ci]" || echo "nothing to commit"
+          git push origin HEAD:ci-logs --force
+
+      - name: Fail job if build failed
+        run: test "$BUILD_EXIT" = "0"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

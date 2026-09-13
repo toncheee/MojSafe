@@ -881,6 +881,14 @@ fun ItemDetail(item: VaultItem, onEdit: () -> Unit, onMove: () -> Unit, onDelete
     }
 }
 
+/** Swaps the element at `from` with the one at `to`, if `to` is a valid index. */
+private fun <T> SnapshotStateList<T>.move(from: Int, to: Int) {
+    if (to !in indices) return
+    val tmp = this[from]
+    this[from] = this[to]
+    this[to] = tmp
+}
+
 @Composable
 fun EditItemScreen(
     existing: VaultItem?,
@@ -913,7 +921,20 @@ fun EditItemScreen(
             Spacer(Modifier.height(16.dp))
             Text("Fields", style = MaterialTheme.typography.titleMedium)
             fields.forEachIndexed { idx, pair ->
-                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column {
+                        IconButton(
+                            onClick = { fields.move(idx, idx - 1) },
+                            enabled = idx > 0,
+                            modifier = Modifier.size(28.dp)
+                        ) { Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move up") }
+                        IconButton(
+                            onClick = { fields.move(idx, idx + 1) },
+                            enabled = idx < fields.size - 1,
+                            modifier = Modifier.size(28.dp)
+                        ) { Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move down") }
+                    }
+                    Spacer(Modifier.width(4.dp))
                     OutlinedTextField(
                         value = pair.first,
                         onValueChange = { fields[idx] = it to fields[idx].second },

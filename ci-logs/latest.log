@@ -1,0 +1,92 @@
+
+Welcome to Gradle 8.7!
+
+Here are the highlights of this release:
+ - Compiling and testing with Java 22
+ - Cacheable Groovy script compilation
+ - New methods in lazy collection properties
+
+For more details see https://docs.gradle.org/8.7/release-notes.html
+
+Starting a Gradle Daemon (subsequent builds will be faster)
+WARNING: We recommend using a newer Android Gradle plugin to use compileSdk = 36
+
+This Android Gradle plugin (8.6.0) was tested up to compileSdk = 35.
+
+You are strongly encouraged to update your project to use a newer
+Android Gradle plugin that has been tested with compileSdk = 36.
+
+If you are already using the latest version of the Android Gradle plugin,
+you may need to wait until a newer version with support for compileSdk = 36 is available.
+
+For more information refer to the compatibility table:
+https://d.android.com/r/tools/api-level-support
+
+To suppress this warning, add/update
+    android.suppressUnsupportedCompileSdk=36
+to this project's gradle.properties.
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:checkKotlinGradlePluginConfigurationErrors
+> Task :app:generateDebugResValues
+> Task :app:checkDebugAarMetadata
+> Task :app:mapDebugSourceSetPaths
+> Task :app:generateDebugResources
+> Task :app:packageDebugResources
+> Task :app:mergeDebugResources
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:parseDebugLocalResources
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
+> Task :app:javaPreCompileDebug
+> Task :app:mergeDebugShaders
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:processDebugManifestForPackage
+> Task :app:mergeDebugAssets
+> Task :app:compressDebugAssets
+> Task :app:desugarDebugFileDependencies
+> Task :app:processDebugResources
+> Task :app:checkDebugDuplicateClasses
+> Task :app:compileDebugKotlin
+> Task :app:mergeExtDexDebug
+
+> Task :app:compileDebugKotlin
+w: file:///home/runner/work/MojSafe/MojSafe/app/src/main/java/com/example/safeimport/MainActivity.kt:159:26 'LocalLifecycleOwner: ProvidableCompositionLocal<LifecycleOwner>' is deprecated. Moved to lifecycle-runtime-compose library in androidx.lifecycle.compose package.
+w: file:///home/runner/work/MojSafe/MojSafe/app/src/main/java/com/example/safeimport/MainActivity.kt:362:44 'ArrowBack: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ArrowBack
+w: file:///home/runner/work/MojSafe/MojSafe/app/src/main/java/com/example/safeimport/VaultRepository.kt:4:33 'EncryptedSharedPreferences' is deprecated. Deprecated in Java
+w: file:///home/runner/work/MojSafe/MojSafe/app/src/main/java/com/example/safeimport/VaultRepository.kt:5:33 'MasterKey' is deprecated. Deprecated in Java
+w: file:///home/runner/work/MojSafe/MojSafe/app/src/main/java/com/example/safeimport/VaultRepository.kt:15:29 'MasterKey' is deprecated. Deprecated in Java
+w: file:///home/runner/work/MojSafe/MojSafe/app/src/main/java/com/example/safeimport/VaultRepository.kt:15:39 'Builder' is deprecated. Deprecated in Java
+w: file:///home/runner/work/MojSafe/MojSafe/app/src/main/java/com/example/safeimport/VaultRepository.kt:16:23 'MasterKey' is deprecated. Deprecated in Java
+w: file:///home/runner/work/MojSafe/MojSafe/app/src/main/java/com/example/safeimport/VaultRepository.kt:16:33 'KeyScheme' is deprecated. Deprecated in Java
+w: file:///home/runner/work/MojSafe/MojSafe/app/src/main/java/com/example/safeimport/VaultRepository.kt:19:25 'EncryptedSharedPreferences' is deprecated. Deprecated in Java
+w: file:///home/runner/work/MojSafe/MojSafe/app/src/main/java/com/example/safeimport/VaultRepository.kt:23:9 'EncryptedSharedPreferences' is deprecated. Deprecated in Java
+w: file:///home/runner/work/MojSafe/MojSafe/app/src/main/java/com/example/safeimport/VaultRepository.kt:23:36 'PrefKeyEncryptionScheme' is deprecated. Deprecated in Java
+w: file:///home/runner/work/MojSafe/MojSafe/app/src/main/java/com/example/safeimport/VaultRepository.kt:24:9 'EncryptedSharedPreferences' is deprecated. Deprecated in Java
+w: file:///home/runner/work/MojSafe/MojSafe/app/src/main/java/com/example/safeimport/VaultRepository.kt:24:36 'PrefValueEncryptionScheme' is deprecated. Deprecated in Java
+
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:dexBuilderDebug
+> Task :app:mergeDebugGlobalSynthetics
+> Task :app:processDebugJavaRes
+> Task :app:mergeLibDexDebug
+> Task :app:mergeDebugJniLibFolders
+> Task :app:mergeProjectDexDebug
+> Task :app:validateSigningDebug
+> Task :app:writeDebugAppMetadata
+> Task :app:mergeDebugNativeLibs
+> Task :app:writeDebugSigningConfigVersions
+
+> Task :app:stripDebugDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so.
+
+> Task :app:mergeDebugJavaResource
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect
+> Task :app:assembleDebug
+
+BUILD SUCCESSFUL in 3m 15s
+36 actionable tasks: 36 executed

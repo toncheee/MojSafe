@@ -1022,6 +1022,14 @@ fun ReorderableFields(labels: SnapshotStateList<String>, values: SnapshotStateLi
                         .graphicsLayer { translationY = if (isValueDragged) valueDragOffset else 0f }
                         .zIndex(if (isValueDragged) 1f else 0f)
                 )
+                Spacer(Modifier.width(4.dp))
+                IconButton(onClick = {
+                    val tmp = labels[idx]
+                    labels[idx] = values[idx]
+                    values[idx] = tmp
+                }) {
+                    Icon(Icons.Default.SwapHoriz, contentDescription = "Swap label and value")
+                }
                 IconButton(onClick = {
                     labels.removeAt(idx)
                     values.removeAt(idx)
@@ -1064,7 +1072,8 @@ fun EditItemScreen(
             Spacer(Modifier.height(16.dp))
             Text(
                 "Fields — press and hold a handle to move that label or value on its own " +
-                "(handy for fixing a mismatched pair), or move both to reorder the whole row.",
+                "(handy for fixing a mismatched pair), tap ⇄ to swap a label and value, " +
+                "or move both to reorder the whole row.",
                 style = MaterialTheme.typography.titleMedium
             )
             ReorderableFields(labels, values)

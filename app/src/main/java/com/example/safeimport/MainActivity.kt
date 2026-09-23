@@ -895,79 +895,137 @@ private fun <T> SnapshotStateList<T>.move(from: Int, to: Int) {
     add(to, item)
 }
 
-/** A field list the user can reorder by pressing and holding the drag handle, then
- *  dragging up/down — no external library, just manual drag tracking per row. */
+/** One column (either all labels or all values) that can be reordered independently
+ *  by pressing and holding its drag handle. Kept generic so labels and values can be
+ *  dragged separately — useful for fixing a label that ended up paired with the wrong
+ *  value, without having to retype anything. */
 @Composable
-fun ReorderableFields(fields: SnapshotStateList<Pair<String, String>>) {
+private fun DraggableColumnEntry(
+    text: String,
+    hint: String,
+    onTextChange: (String) -> Unit,
+    onDragStart: () -> Unit,
+    onDragBy: (deltaPx: Float) -> Unit,
+    onDragEnd: () -> Unit,
+    isDragged: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .background(
+                if (isDragged) MaterialTheme.colorScheme.surfaceVariant
+                else MaterialTheme.colorScheme.surface
+            ),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Default.DragHandle,
+            contentDescription = "Press and hold to move this $hint independently",
+            modifier = Modifier
+                .padding(end = 2.dp)
+                .pointerInput(Unit) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { onDragStart() },
+                        onDrag = { change, dragAmount -> change.consume(); onDragBy(dragAmount.y) },
+                        onDragEnd = { onDragEnd() },
+                        onDragCancel = { onDragEnd() }
+                    )
+                }
+        )
+        OutlinedTextField(
+            value = text,
+            onValueChange = onTextChange,
+            label = { Text(hint) },
+            singleLine = true,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+/** Two independently-reorderable columns — labels and values — so a label that ended
+ *  up next to the wrong value (common after importing messy legacy data) can be fixed
+ *  by dragging just one side, instead of retyping or only being able to move whole
+ *  label+value rows together. */
+@Composable
+fun ReorderableFields(labels: SnapshotStateList<String>, values: SnapshotStateList<String>) {
     var rowHeightPx by remember { mutableStateOf(0f) }
-    var draggedIndex by remember { mutableStateOf<Int?>(null) }
-    var dragOffset by remember { mutableStateOf(0f) }
+
+    var draggedLabelIndex by remember { mutableStateOf<Int?>(null) }
+    var labelDragOffset by remember { mutableStateOf(0f) }
+    var draggedValueIndex by remember { mutableStateOf<Int?>(null) }
+    var valueDragOffset by remember { mutableStateOf(0f) }
+
+    fun handleDrag(
+        current: Int,
+        deltaY: Float,
+        offset: Float,
+        setOffset: (Float) -> Unit,
+        setIndex: (Int) -> Unit,
+        list: SnapshotStateList<String>
+    ) {
+        val newOffset = offset + deltaY
+        val height = rowHeightPx
+        if (height > 0f) {
+            val moveBy = (newOffset / height).toInt()
+            if (moveBy != 0) {
+                val newIndex = (current + moveBy).coerceIn(0, list.size - 1)
+                if (newIndex != current) {
+                    list.move(current, newIndex)
+                    setIndex(newIndex)
+                    setOffset(newOffset - moveBy * height)
+                    return
+                }
+            }
+        }
+        setOffset(newOffset)
+    }
 
     Column {
-        fields.forEachIndexed { idx, pair ->
-            val isDragged = idx == draggedIndex
+        for (idx in labels.indices) {
+            val isLabelDragged = idx == draggedLabelIndex
+            val isValueDragged = idx == draggedValueIndex
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .onSizeChanged { if (rowHeightPx == 0f) rowHeightPx = it.height.toFloat() }
-                    .graphicsLayer { translationY = if (isDragged) dragOffset else 0f }
-                    .zIndex(if (isDragged) 1f else 0f)
-                    .background(
-                        if (isDragged) MaterialTheme.colorScheme.surfaceVariant
-                        else MaterialTheme.colorScheme.surface
-                    )
                     .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    Icons.Default.DragHandle,
-                    contentDescription = "Press and hold to reorder",
+                DraggableColumnEntry(
+                    text = labels[idx],
+                    hint = "label",
+                    onTextChange = { labels[idx] = it },
+                    onDragStart = { draggedLabelIndex = idx; labelDragOffset = 0f },
+                    onDragBy = { d ->
+                        handleDrag(idx, d, labelDragOffset, { labelDragOffset = it }, { draggedLabelIndex = it }, labels)
+                    },
+                    onDragEnd = { draggedLabelIndex = null; labelDragOffset = 0f },
+                    isDragged = isLabelDragged,
                     modifier = Modifier
-                        .padding(end = 4.dp)
-                        .pointerInput(idx) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = {
-                                    draggedIndex = idx
-                                    dragOffset = 0f
-                                },
-                                onDrag = { change, dragAmount ->
-                                    change.consume()
-                                    dragOffset += dragAmount.y
-                                    val current = draggedIndex ?: return@detectDragGesturesAfterLongPress
-                                    val height = rowHeightPx
-                                    if (height > 0f) {
-                                        val moveBy = (dragOffset / height).toInt()
-                                        if (moveBy != 0) {
-                                            val newIndex = (current + moveBy).coerceIn(0, fields.size - 1)
-                                            if (newIndex != current) {
-                                                fields.move(current, newIndex)
-                                                draggedIndex = newIndex
-                                                dragOffset -= moveBy * height
-                                            }
-                                        }
-                                    }
-                                },
-                                onDragEnd = { draggedIndex = null; dragOffset = 0f },
-                                onDragCancel = { draggedIndex = null; dragOffset = 0f }
-                            )
-                        }
-                )
-                OutlinedTextField(
-                    value = pair.first,
-                    onValueChange = { fields[idx] = it to fields[idx].second },
-                    label = { Text("Label") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
+                        .weight(1f)
+                        .graphicsLayer { translationY = if (isLabelDragged) labelDragOffset else 0f }
+                        .zIndex(if (isLabelDragged) 1f else 0f)
                 )
                 Spacer(Modifier.width(8.dp))
-                OutlinedTextField(
-                    value = pair.second,
-                    onValueChange = { fields[idx] = fields[idx].first to it },
-                    label = { Text("Value") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
+                DraggableColumnEntry(
+                    text = values[idx],
+                    hint = "value",
+                    onTextChange = { values[idx] = it },
+                    onDragStart = { draggedValueIndex = idx; valueDragOffset = 0f },
+                    onDragBy = { d ->
+                        handleDrag(idx, d, valueDragOffset, { valueDragOffset = it }, { draggedValueIndex = it }, values)
+                    },
+                    onDragEnd = { draggedValueIndex = null; valueDragOffset = 0f },
+                    isDragged = isValueDragged,
+                    modifier = Modifier
+                        .weight(1f)
+                        .graphicsLayer { translationY = if (isValueDragged) valueDragOffset else 0f }
+                        .zIndex(if (isValueDragged) 1f else 0f)
                 )
-                IconButton(onClick = { fields.removeAt(idx) }) {
+                IconButton(onClick = {
+                    labels.removeAt(idx)
+                    values.removeAt(idx)
+                }) {
                     Icon(Icons.Default.Close, contentDescription = "Remove field")
                 }
             }
@@ -983,11 +1041,10 @@ fun EditItemScreen(
     onCancel: () -> Unit
 ) {
     var title by remember { mutableStateOf(existing?.title ?: "") }
-    val fields: SnapshotStateList<Pair<String, String>> = remember {
-        (existing?.fieldPairs(startIndex = if (isFolder) 0 else 1) ?: emptyList())
-            .ifEmpty { listOf("" to "") }
-            .toMutableStateList()
-    }
+    val initialPairs = (existing?.fieldPairs(startIndex = if (isFolder) 0 else 1) ?: emptyList())
+        .ifEmpty { listOf("" to "") }
+    val labels: SnapshotStateList<String> = remember { initialPairs.map { it.first }.toMutableStateList() }
+    val values: SnapshotStateList<String> = remember { initialPairs.map { it.second }.toMutableStateList() }
 
     Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         Text(
@@ -1005,10 +1062,14 @@ fun EditItemScreen(
 
         if (!isFolder) {
             Spacer(Modifier.height(16.dp))
-            Text("Fields (press and hold the handle to reorder)", style = MaterialTheme.typography.titleMedium)
-            ReorderableFields(fields)
+            Text(
+                "Fields — press and hold a handle to move that label or value on its own " +
+                "(handy for fixing a mismatched pair), or move both to reorder the whole row.",
+                style = MaterialTheme.typography.titleMedium
+            )
+            ReorderableFields(labels, values)
             Spacer(Modifier.height(8.dp))
-            TextButton(onClick = { fields.add("" to "") }) {
+            TextButton(onClick = { labels.add(""); values.add("") }) {
                 Icon(Icons.Default.Add, contentDescription = null)
                 Spacer(Modifier.width(4.dp))
                 Text("Add field")
@@ -1018,10 +1079,8 @@ fun EditItemScreen(
         Spacer(Modifier.height(24.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = {
-                onSave(
-                    title.ifBlank { if (isFolder) "Untitled folder" else "Untitled" },
-                    fields.filter { it.first.isNotBlank() || it.second.isNotBlank() }
-                )
+                val fields = labels.zip(values).filter { it.first.isNotBlank() || it.second.isNotBlank() }
+                onSave(title.ifBlank { if (isFolder) "Untitled folder" else "Untitled" }, fields)
             }) { Text("Save") }
             OutlinedButton(onClick = onCancel) { Text("Cancel") }
         }

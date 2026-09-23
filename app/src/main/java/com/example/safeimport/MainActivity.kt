@@ -6,7 +6,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -29,6 +31,10 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -881,12 +887,92 @@ fun ItemDetail(item: VaultItem, onEdit: () -> Unit, onMove: () -> Unit, onDelete
     }
 }
 
-/** Swaps the element at `from` with the one at `to`, if `to` is a valid index. */
+/** Moves the element at `from` to position `to`, shifting the others — not a swap,
+ *  since a drag can jump over more than one row at a time. */
 private fun <T> SnapshotStateList<T>.move(from: Int, to: Int) {
-    if (to !in indices) return
-    val tmp = this[from]
-    this[from] = this[to]
-    this[to] = tmp
+    if (from == to || to !in indices) return
+    val item = removeAt(from)
+    add(to, item)
+}
+
+/** A field list the user can reorder by pressing and holding the drag handle, then
+ *  dragging up/down — no external library, just manual drag tracking per row. */
+@Composable
+fun ReorderableFields(fields: SnapshotStateList<Pair<String, String>>) {
+    var rowHeightPx by remember { mutableStateOf(0f) }
+    var draggedIndex by remember { mutableStateOf<Int?>(null) }
+    var dragOffset by remember { mutableStateOf(0f) }
+
+    Column {
+        fields.forEachIndexed { idx, pair ->
+            val isDragged = idx == draggedIndex
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onSizeChanged { if (rowHeightPx == 0f) rowHeightPx = it.height.toFloat() }
+                    .graphicsLayer { translationY = if (isDragged) dragOffset else 0f }
+                    .zIndex(if (isDragged) 1f else 0f)
+                    .background(
+                        if (isDragged) MaterialTheme.colorScheme.surfaceVariant
+                        else MaterialTheme.colorScheme.surface
+                    )
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.DragHandle,
+                    contentDescription = "Press and hold to reorder",
+                    modifier = Modifier
+                        .padding(end = 4.dp)
+                        .pointerInput(idx) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    draggedIndex = idx
+                                    dragOffset = 0f
+                                },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    dragOffset += dragAmount.y
+                                    val current = draggedIndex ?: return@detectDragGesturesAfterLongPress
+                                    val height = rowHeightPx
+                                    if (height > 0f) {
+                                        val moveBy = (dragOffset / height).toInt()
+                                        if (moveBy != 0) {
+                                            val newIndex = (current + moveBy).coerceIn(0, fields.size - 1)
+                                            if (newIndex != current) {
+                                                fields.move(current, newIndex)
+                                                draggedIndex = newIndex
+                                                dragOffset -= moveBy * height
+                                            }
+                                        }
+                                    }
+                                },
+                                onDragEnd = { draggedIndex = null; dragOffset = 0f },
+                                onDragCancel = { draggedIndex = null; dragOffset = 0f }
+                            )
+                        }
+                )
+                OutlinedTextField(
+                    value = pair.first,
+                    onValueChange = { fields[idx] = it to fields[idx].second },
+                    label = { Text("Label") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                OutlinedTextField(
+                    value = pair.second,
+                    onValueChange = { fields[idx] = fields[idx].first to it },
+                    label = { Text("Value") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = { fields.removeAt(idx) }) {
+                    Icon(Icons.Default.Close, contentDescription = "Remove field")
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -919,42 +1005,8 @@ fun EditItemScreen(
 
         if (!isFolder) {
             Spacer(Modifier.height(16.dp))
-            Text("Fields", style = MaterialTheme.typography.titleMedium)
-            fields.forEachIndexed { idx, pair ->
-                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column {
-                        IconButton(
-                            onClick = { fields.move(idx, idx - 1) },
-                            enabled = idx > 0,
-                            modifier = Modifier.size(28.dp)
-                        ) { Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Move up") }
-                        IconButton(
-                            onClick = { fields.move(idx, idx + 1) },
-                            enabled = idx < fields.size - 1,
-                            modifier = Modifier.size(28.dp)
-                        ) { Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move down") }
-                    }
-                    Spacer(Modifier.width(4.dp))
-                    OutlinedTextField(
-                        value = pair.first,
-                        onValueChange = { fields[idx] = it to fields[idx].second },
-                        label = { Text("Label") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    OutlinedTextField(
-                        value = pair.second,
-                        onValueChange = { fields[idx] = fields[idx].first to it },
-                        label = { Text("Value") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = { fields.removeAt(idx) }) {
-                        Icon(Icons.Default.Close, contentDescription = "Remove field")
-                    }
-                }
-            }
+            Text("Fields (press and hold the handle to reorder)", style = MaterialTheme.typography.titleMedium)
+            ReorderableFields(fields)
             Spacer(Modifier.height(8.dp))
             TextButton(onClick = { fields.add("" to "") }) {
                 Icon(Icons.Default.Add, contentDescription = null)
